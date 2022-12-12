@@ -1,33 +1,38 @@
-import unittest
 import pandas as pd
-import pickle
 import requests
 from flask import Flask, request
 import json
-from tqdm import tqdm
-import time
-import unicodedata
-import pickle
 
-uri = "http://107.23.108.110:5000/" # 수정필요
+was_uri = "http://107.23.108.110:5000/" # 수정필요
+ws_uri = "https://charm10jo-skywalker.shop/"
 tfitf_table_path = './tfidf.csv'
 
 df = pd.read_csv(tfitf_table_path)
 
+app = Flask(__name__)
+app.config['JSON_AS_ASCII'] = False
 
-def get_division(text):
-    start = time.time()
+@app.route('/cache/search', methods=['POST'])
+def get_division():
+    request_json = json.loads(request.get_data(), encoding='utf-8')
+
+    symptoms = request_json['symptoms']
+    language = request_json['language']
+    priority = request_json['priority']
+    latitude = request_json['latitude']
+    longitude = request_json['longitude']
+
     # WAS로부터 전처리된 데이터를 받아옵니다.
-    res = requests.post(uri+'tokenize', data=json.dumps({"text":text}), headers={'Content-Type': 'text/text; charset=utf-8'})
+    res = requests.post(was_uri+'tokenize', data=json.dumps({"text":symptoms}), headers={'Content-Type': 'text/text; charset=utf-8'})
+    
     tokenized = res.json()
     arr_divisions = []
 
     # nouns 는 전처리된 데이터 중 명사만을 추출한 것 입니다.
     nouns = tokenized["nouns"]
-
     # talk 는 전처리된 데이터 자체로, 한국어로 된 문장에 가깝습니다.
     talk = tokenized["tok_symptoms"]
-
+    
     for i in range(14):
         arr_divisions.append(0)
 
@@ -66,18 +71,25 @@ def get_division(text):
     predict_div = weights_of_divisions.index(max(weights_of_divisions))
     missed = len(not_included) / tokens_len
 
-    end = time.time()
-    this_time = end - start
-
     # 캐시 서버의 예측을 신뢰하는 경우입니다.
     if std >= 0.032 and missed < 0.30:
-        return {"result":"cached", "division":predict_div, "std": std, "time": this_time}
+        ws_res =  requests.post(ws_uri, data={
+                "division": predict_div, 
+                "language": language,
+                "priority": priority,
+                "latitude": latitude,
+                "longitude": longitude
+            })
+        ws_res_json = ws_res.json()["result"]
+        return {"result": ws_res_json}
+
     # 비증상 정보를 입력받았을 것을 가정하는 경우입니다. 
     elif std < 0.032 and missed >= 0.30:
-        return {"result":"wrong", "division": "wrong", "std":std, "missed":missed}
+        return {"result":"wrong"}
+
     # AI 서버로 증상 정보를 보내 분과 정보를 반환받습니다. 
     else:
-        predict_uri = uri + '/predict'
+        predict_uri = was_uri + '/predict'
         res = requests.post(predict_uri, data=json.dumps({"token":talk}), headers={'Content-Type': 'text/text; charset=utf-8'})
         
         res_json = res.json()
@@ -86,7 +98,19 @@ def get_division(text):
 
         # 만약 AI가 한 예측의 신뢰도가 90% 이하라면, chatserver는 사용자에게 상담원 매칭을 제안합니다.
         if(probability <= 90):
-            return {"result":"AI result: bad", "division":division, "prob": probability,  "std": std}
+            return {"result": "bad_prob"}
         # AI가 한 예측의 신뢰도가 충분히 높다면, 분과 정보를 반환합니다.
         else:
-            return {"result":"AI result","std": std,  "division": division, "prob":probability, "time": this_time}
+            ws_res =  requests.post(ws_uri, data={
+                "division": division, 
+                "language": language,
+                "priority": priority,
+                "latitude": latitude,
+                "longitude": longitude
+            })
+
+            ws_res_json = ws_res.json()["result"]
+            return {"result": ws_res_json}
+
+if __name__ == '__main__':
+   app.run('0.0.0.0',port=5000,debug=True)
