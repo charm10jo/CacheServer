@@ -2,9 +2,12 @@ import pandas as pd
 import requests
 from flask import Flask, request
 import json
+import os
+from dotenv import load_dotenv
+load_dotenv()
 
-was_uri = "http://100.24.235.22:5000/" # 수정필요
-ws_uri = "https://charm10jo-skywalker.shop/"
+was_uri = os.environ.get("WAS_URI")
+ws_uri = os.environ.get("WS_URI")
 tfitf_table_path = './tfidf.csv'
 
 df = pd.read_csv(tfitf_table_path)
